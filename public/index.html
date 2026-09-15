@@ -1,0 +1,148 @@
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>LifeVerse v0.1</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;overflow:hidden;font-family:system-ui;background:#101827;color:white}
+    #game{width:100vw;height:100vh}#create,#hud,#chat,#jobs,#full{position:fixed;z-index:5}
+    #create{inset:0;display:grid;place-items:center;background:linear-gradient(135deg,#0d1728,#244c73)}
+    .card{width:min(420px,92vw);padding:28px;border-radius:20px;background:#102238ee;box-shadow:0 20px 70px #0008}
+    h1{margin-top:0;font-size:42px}.muted{opacity:.75}input,button,select{font:inherit;border:0;border-radius:10px;padding:11px}
+    input,select{width:100%;margin:7px 0 14px;background:#eef4ff;color:#142033}
+    button{cursor:pointer;background:#28d17c;color:#07130d;font-weight:700}.gender{display:flex;gap:10px}.gender button{flex:1;background:#3d6a93;color:white}.gender button.selected{background:#e56bd4}
+    #hud{left:15px;top:15px;background:#102238dd;padding:12px 15px;border-radius:14px;min-width:180px}
+    #hud b{font-size:18px}#jobs{right:15px;top:15px;background:#102238ee;padding:14px;border-radius:14px;width:250px}
+    #jobs button{width:100%;margin:5px 0}#work{background:#ffcb57;color:#241a00}
+    #chat{left:15px;bottom:15px;width:min(390px,calc(100vw - 30px));background:#102238dd;border-radius:14px;padding:10px}
+    #messages{height:130px;overflow:auto;font-size:14px;margin-bottom:8px}.chatrow{display:flex;gap:7px}.chatrow input{margin:0}
+    #full{inset:0;display:none;place-items:center;background:#07101cee;font-size:25px}
+    #hint{position:fixed;bottom:160px;right:20px;z-index:3;opacity:.7;text-align:right}
+  </style>
+</head>
+<body>
+<div id="game"></div>
+<div id="create"><div class="card">
+  <h1>LifeVerse</h1><p class="muted">Version 0.1 • 4-player online city</p>
+  <label>Name</label><input id="name" maxlength="16" value="Player"/>
+  <label>Gender</label><div class="gender">
+    <button id="male" class="selected">♂ Male</button><button id="female">♀ Female</button>
+  </div>
+  <button id="start" style="width:100%;margin-top:18px">Enter City</button>
+  <p class="muted">WASD / arrow keys to move • Walk around, work, earn money and chat.</p>
+</div></div>
+
+<div id="hud"><b id="playerName">Player</b><br>💰 $<span id="money">1000</span><br>💼 <span id="job">Unemployed</span><br>👥 <span id="count">1</span>/4 players</div>
+<div id="jobs">
+  <b>Jobs</b><br>
+  <button data-job="Software Engineer">💻 Software Engineer — $50</button>
+  <button data-job="Doctor">🩺 Doctor — $60</button>
+  <button data-job="Police Officer">👮 Police Officer — $55</button>
+  <button data-job="Thief">🥷 Thief — $70</button>
+  <button id="work">Work 1 shift</button>
+</div>
+<div id="chat"><div id="messages"></div><div class="chatrow"><input id="chatInput" placeholder="Message your friends…"/><button id="send">Send</button></div></div>
+<div id="hint">Explore the city<br>🏥 Hospital • 👮 Police • 💻 TechCorp • 🏠 Homes</div>
+<div id="full">The city is full. Maximum 4 players.</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js";
+
+const socket=io();
+let gender="male", me=null, localMesh=null;
+const remote=new Map();
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87bde8);
+scene.fog=new THREE.Fog(0x87bde8,45,130);
+const camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,200);
+camera.position.set(0,9,12);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight);
+document.querySelector("#game").appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x668866,2));
+const sun=new THREE.DirectionalLight(0xffffff,2);sun.position.set(20,30,10);scene.add(sun);
+
+function box(w,h,d,color,x,y,z){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color}));
+ m.position.set(x,y,z);scene.add(m);return m;
+}
+box(110,.2,110,0x6eaa62,0,0,0);
+for(let i=-45;i<=45;i+=10){box(7,.12,100,0x40454d,i,.08,0);box(100,.12,7,0x40454d,0,.08,i);}
+function building(x,z,w,h,d,color,label){
+ box(w,h,d,color,x,h/2,z);
+ const div=document.createElement("div"); div.textContent=label;
+}
+building(-25,-20,15,12,12,0xd9b27c,"Hospital");
+building(25,-20,15,10,12,0x8aaed1,"Police Station");
+building(-25,22,15,9,12,0x6d83b9,"TechCorp");
+building(25,22,14,7,14,0xb87a6e,"Homes");
+for(let i=0;i<25;i++){
+ const x=(Math.random()*90-45),z=(Math.random()*90-45);
+ if(Math.abs(x%10)<4 && Math.abs(z%10)<4) continue;
+ box(1.5,3+Math.random()*4,1.5,0x4d8b50,x,2,z);
+}
+function avatar(g){
+ const group=new THREE.Group();
+ const body=box(.8,1.3,.55,g==="female"?0xe56bd4:0x2878d0,0,.85,0); group.add(body);scene.remove(body);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.38,16,12),new THREE.MeshStandardMaterial({color:0xf0c49b}));head.position.y=1.75;group.add(head);
+ const torso=new THREE.Mesh(new THREE.BoxGeometry(.8,1.1,.55),new THREE.MeshStandardMaterial({color:g==="female"?0xe56bd4:0x2878d0}));torso.position.y=.9;group.add(torso);
+ return group;
+}
+function addRemote(p){
+ let m=remote.get(p.id); if(!m){m=avatar(p.gender);scene.add(m);remote.set(p.id,m)}
+ m.position.set(p.x,0,p.z);
+}
+function updateList(list){
+ document.querySelector("#count").textContent=list.length;
+ for(const p of list) if(p.id!==me?.id) addRemote(p);
+}
+const keys={};addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true);addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+
+document.querySelector("#male").onclick=()=>{gender="male";male.classList.add("selected");female.classList.remove("selected")};
+document.querySelector("#female").onclick=()=>{gender="female";female.classList.add("selected");male.classList.remove("selected")};
+document.querySelector("#start").onclick=()=>{
+ socket.emit("join",{name:document.querySelector("#name").value||"Player",gender});
+};
+socket.on("joined",p=>{
+ me=p; document.querySelector("#create").style.display="none";
+ document.querySelector("#playerName").textContent=p.name;document.querySelector("#money").textContent=p.money;
+ localMesh=avatar(p.gender);scene.add(localMesh);localMesh.position.set(p.x,0,p.z);
+});
+socket.on("players",list=>{
+ updateList(list);
+ const mine=list.find(p=>p.id===me?.id);
+ if(mine){document.querySelector("#money").textContent=mine.money;document.querySelector("#job").textContent=mine.job}
+});
+socket.on("playerMoved",p=>{const m=remote.get(p.id);if(m)m.position.set(p.x,0,p.z)});
+socket.on("money",m=>document.querySelector("#money").textContent=m);
+socket.on("jobChanged",j=>document.querySelector("#job").textContent=j.job);
+socket.on("full",()=>document.querySelector("#full").style.display="grid");
+
+document.querySelectorAll("[data-job]").forEach(b=>b.onclick=()=>socket.emit("chooseJob",b.dataset.job));
+document.querySelector("#work").onclick=()=>socket.emit("work");
+function send(){const i=document.querySelector("#chatInput");if(i.value.trim()){socket.emit("chat",i.value);i.value=""}}
+document.querySelector("#send").onclick=send;document.querySelector("#chatInput").onkeydown=e=>{if(e.key==="Enter")send()};
+socket.on("chat",m=>{
+ const box=document.querySelector("#messages");const line=document.createElement("div");line.textContent=m.name+": "+m.message;box.appendChild(line);box.scrollTop=box.scrollHeight;
+});
+function animate(){
+ requestAnimationFrame(animate);
+ if(localMesh){
+   let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0);
+   let dz=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);
+   const len=Math.hypot(dx,dz)||1; dx/=len;dz/=len;
+   if(dx||dz){localMesh.position.x+=dx*.18;localMesh.position.z+=dz*.18;socket.emit("move",{x:localMesh.position.x,z:localMesh.position.z})}
+   camera.position.x+=(localMesh.position.x-camera.position.x)*.08;
+   camera.position.z+=(localMesh.position.z+12-camera.position.z)*.08;
+   camera.lookAt(localMesh.position.x,1,localMesh.position.z);
+ }
+ renderer.render(scene,camera);
+}
+addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+animate();
+</script>
+</body>
+</html>
